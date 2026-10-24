@@ -1,4 +1,4 @@
-// ScanMyFood web: sign-in against the NutriScan AI backend (email + password → JWT bearer token, 7-day expiry).
+// The Nutritionist web: sign-in against the NutriScan AI backend (email + password → JWT bearer token, 7-day expiry).
 // Everyone uses the server, so scans, chat, meal ideas and insights always come from Gemini.
 // "Continue as guest" creates a throw-away guest account on the server (POST /auth/guest): no sign-up, same AI.
 //
@@ -37,7 +37,8 @@ window.onSessionExpired = () => {
 
 function loginMarkup() {
   return `<div class="login-card" role="dialog" aria-modal="true" aria-labelledby="login-title">
-    <h2 id="login-title">ScanMyFood</h2>
+    <h2 id="login-title">The Nutritionist</h2>
+    <p class="tagline">Your own personal nutritionist</p>
     <p>Photograph what you eat and see what it does to your gut, skin, liver and kidneys. Sign in to keep your meals on every device, or continue as a guest: the AI scanner and chat work the same way.</p>
     <form id="lg-form">
       <label>Email<input id="lg-email" type="email" autocomplete="email" required></label>

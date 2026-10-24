@@ -1,4 +1,4 @@
-/* ScanMyFood web: the "mess tray" look.
+/* The Nutritionist web: the "mess tray" look.
    A steel tray with compartments: each nutrient or organ sits in its own compartment and fills up like a serving. */
 
 :root {
@@ -239,3 +239,41 @@ label[for="pantry"] { display: block; margin: 4px 0 8px; }
 .login-card label.lg-keep { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; }
 .side-foot .link-btn { background: none; border: 0; padding: 0; color: inherit; opacity: .75; text-decoration: underline; cursor: pointer; font: inherit; font-size: .85rem; justify-self: start; }
 .side-foot .link-btn:hover { opacity: 1; }
+
+/* ---------- The Nutritionist: brand, skin guide and glow ---------- */
+.brand .tagline { display: block; margin-top: 4px; font: 400 .78rem/1.35 var(--font-body); letter-spacing: .01em; color: #b7cabd; }
+.login-card .tagline { margin: 0 0 12px; font-weight: 600; color: var(--leaf); }
+
+.skin-block .chips { margin-top: 4px; }
+.skin-block .how ul { margin: 8px 0 0; padding-left: 20px; }
+.skin-guide { max-width: 46rem; margin-top: 18px; }
+.skin-guide > h4 { margin-top: 0; }
+.skin-guide .lists { margin-top: 4px; }
+.skin-guide .lists li { margin: 4px 0; }
+
+.skinfit { margin: 6px 0 0; padding: 4px 10px; border-radius: 6px; background: var(--leaf-soft); color: #25563a; font-size: .88rem; }
+.skinfit.ok { background: var(--turmeric-soft); color: #6b4a06; }
+.skinfit.warn { background: var(--chili-soft); color: #7d1e17; }
+.swap > .skinfit { justify-self: start; }
+
+.tray.skin { grid-template-columns: repeat(5, 1fr); }
+.skin .cell { min-height: 110px; }
+.skin .cell b { font-size: 1.2rem; }
+
+.chart.skin-days { max-width: 480px; }
+.glowline { margin: 10px 0 14px; font-size: .92rem; }
+.glow { max-width: 46rem; margin: 18px 0 0 10px; padding: 0; list-style: none; }
+.glow li { position: relative; margin: 0; padding: 0 0 20px 26px; border-left: 2px solid var(--line); }
+.glow li:last-child { padding-bottom: 0; }
+.glow li::before { content: ''; position: absolute; left: -11px; top: 2px; width: 20px; height: 20px; border: 2px solid var(--field); border-radius: 50%; background: var(--paper); }
+.glow li.reached { border-left-color: var(--leaf); }
+.glow li.reached::before { background: var(--leaf); border-color: var(--leaf); }
+.glow li.next::before { background: var(--turmeric-soft); border-color: var(--turmeric); }
+.glow li > b { display: block; font-size: 1.02rem; }
+.glow .when { display: block; font-weight: 600; }
+.glow .forskin { display: block; margin-top: 4px; color: var(--muted); }
+.glow + .sub { margin-top: 16px; }
+
+@media (max-width: 760px) {
+  .tray.skin { grid-template-columns: 1fr 1fr; }
+}

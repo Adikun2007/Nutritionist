@@ -1,4 +1,4 @@
-// ScanMyFood web: app logic and pages.
+// The Nutritionist web: app logic and pages.
 // Load order in index.html: config.js, data.js, api.js, auth.js, app.js
 
 // ---------- Small helpers ----------
@@ -35,7 +35,7 @@ function toast(text) {
 }
 
 // ---------- State (saved per person in localStorage) ----------
-const DEFAULT_PROFILE = { name: '', age: 20, sex: 'other', weight: 65, height: 170, activity: 'light', goal: 2000, goalDir: 'maintain', diet: 'Vegetarian', kitchen: 'burner' };
+const DEFAULT_PROFILE = { name: '', age: 20, sex: 'other', weight: 65, height: 170, activity: 'light', goal: 2000, goalDir: 'maintain', diet: 'Vegetarian', kitchen: 'burner', skin: '' };
 let state;
 let scan = { file: null, url: '', mode: 'meal', result: null, chat: [], added: false, busy: false };
 let cook = { pantry: '', results: null, busy: false, focus: '' };
@@ -207,6 +207,276 @@ function impactHtml() {
     <p class="sub small">The fill rises with the level of concern. Based only on the meals you logged, so log every meal for a fair picture. This is general guidance, not a medical diagnosis. Talk to a doctor if you have symptoms.</p>`;
 }
 
+// ---------- Skin and glow ----------
+// Everything in this section is calculated from the meals you logged, not by the AI. It is general nutrition
+// guidance, not a diagnosis. Sugar, fibre and salt limits match the dashboard; each skin type weighs them differently.
+const skinType = () => (SKIN_TYPES[state.profile.skin] ? state.profile.skin : '');
+const mealText = m => `${m.name || ''} ${m.foods || ''}`;
+const isOilyMeal = m => !!m.street || (+m.fat || 0) >= 20 || FRIED_WORDS.test(mealText(m));
+const isGlowMeal = m => GLOW_WORDS.test(mealText(m));
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+const SKIN_FACTORS = ['sugar', 'oil', 'fibre', 'salt', 'glow'];
+const FACTOR_NAME = { sugar: 'Sugar', oil: 'Fried and oily', fibre: 'Fibre', salt: 'Salt', glow: 'Glow foods' };
+const SKIN_WEIGHTS = {
+  oily: { sugar: 1.3, oil: 1.5, fibre: 1, salt: 0.7, glow: 1 },
+  dry: { sugar: 1, oil: 0.8, fibre: 0.8, salt: 1.5, glow: 1.3 },
+  combination: { sugar: 1.2, oil: 1.2, fibre: 1, salt: 1, glow: 1 },
+  sensitive: { sugar: 1, oil: 1.1, fibre: 0.8, salt: 1, glow: 1.3 },
+  normal: { sugar: 1, oil: 1, fibre: 1, salt: 1, glow: 1 },
+};
+const LEVEL_SCORE = [100, 60, 25]; // level 0 on track, 1 watch, 2 concern
+const NO_DATA = { sugar: 'Not enough sugar data yet.', fibre: 'Not enough fibre data yet.', salt: 'Not enough sodium data yet.', glow: 'Log meals on at least 2 days to check this.' };
+
+// Weighted average of the factor levels, 0 to 100. Factors without data are left out.
+function skinScore(levels) {
+  const wt = SKIN_WEIGHTS[skinType()] || SKIN_WEIGHTS.normal;
+  let top = 0, bottom = 0;
+  for (const k of SKIN_FACTORS) {
+    const lv = levels[k];
+    if (lv === null || lv === undefined) continue;
+    top += wt[k] * LEVEL_SCORE[lv]; bottom += wt[k];
+  }
+  return bottom ? Math.round(top / bottom) : null;
+}
+
+const SKIN_OUTLOOK = [
+  'Keep this up and skin often looks clearer and brighter within 3 to 4 weeks.',
+  'A few small swaps could turn this into a glowing week. Skin usually responds over 3 to 4 weeks.',
+  'Your skin may look duller or break out more than it needs to. Fix the first item below and the rest gets easier.',
+  'This pattern can leave skin dull, oily or puffy. One change at a time is enough: start with the first tip below.',
+];
+const skinBand = s => s >= 90 ? { name: 'Glowing week', tone: 'var(--leaf)', css: 'good', outlook: SKIN_OUTLOOK[0] }
+  : s >= 75 ? { name: 'Good week', tone: 'var(--leaf)', css: 'good', outlook: SKIN_OUTLOOK[1] }
+  : s >= 55 ? { name: 'Mixed week', tone: 'var(--turmeric)', css: '', outlook: SKIN_OUTLOOK[2] }
+  : { name: 'Skin-stressing week', tone: 'var(--chili)', css: 'warn', outlook: SKIN_OUTLOOK[3] };
+
+// Plain-language reason for one factor, in the voice of the chosen skin type.
+function factorText(key, level, c, type) {
+  const t = type || 'normal';
+  if (key === 'sugar') {
+    const base = `Sugar averages ${Math.round(c.sugar)} g a day.`;
+    if (level === 0) return `${base} Steady sugar helps keep skin calm.`;
+    return `${base} ${{
+      oily: 'Sugar spikes can push oil production and breakouts.',
+      dry: 'High sugar over time is linked with duller, less elastic skin.',
+      combination: 'Sugar spikes tend to show up in the oily T-zone.',
+      sensitive: 'Sugar spikes can feed inflammation, which sensitive skin notices first.',
+      normal: 'Sugar spikes are linked with breakouts and dullness.',
+    }[t]}`;
+  }
+  if (key === 'oil') {
+    const base = `${plural(c.oily, 'fried, oily or street meal')} this week.`;
+    if (level === 0) return `${base} Light on fried food, which is good for your skin.`;
+    return `${base} ${{
+      oily: 'Heavy, fried meals are usually also high in refined flour and sugar, which are linked with shine and breakouts.',
+      dry: 'Fried street food is the wrong kind of fat for dry skin. Choose nuts, seeds and a little ghee instead.',
+      combination: 'Heavy, fried meals tend to show up in the oily T-zone.',
+      sensitive: 'Heavy, fried food can leave sensitive skin looking flushed or irritated.',
+      normal: 'Frequent fried food can dull skin.',
+    }[t]}`;
+  }
+  if (key === 'fibre') {
+    const base = `Fibre averages ${Math.round(c.fibre)} g a day (aim for 25 g).`;
+    return level === 0 ? `${base} Good fibre keeps blood sugar steady.`
+      : `${base} Low fibre means bigger blood sugar swings, and gut health and skin are closely linked.`;
+  }
+  if (key === 'salt') {
+    const base = `Sodium averages ${Math.round(c.sodium)} mg a day (limit about 2000 mg).`;
+    if (level === 0) return `${base} Low enough to keep skin hydrated and less puffy.`;
+    return t === 'dry' ? `${base} Too much salt pulls water out of skin and makes it look tight and dull.`
+      : `${base} Salty food causes puffiness, especially around the eyes, and can dehydrate skin.`;
+  }
+  const base = `Colourful vegetables and fruit, dal, nuts, seeds or fish showed up on ${c.glowDays} of the ${plural(c.days, 'day')} you logged.`;
+  return level === 0 ? `${base} Their vitamins A, C and E, zinc and omega-3 support skin.`
+    : `${base} Add one fruit or vegetable and a handful of nuts or seeds every day: the carotenoids in produce give skin a warm, healthy glow.`;
+}
+
+function skinAction(key) {
+  if (key === 'oil') return skinType() === 'dry'
+    ? 'Keep your fats but change the source: nuts, seeds and a little ghee or oil instead of deep-fried snacks.'
+    : 'Swap one fried snack a day for a tawa, steamed or roasted option. The swaps in Cook instead are a good start.';
+  return {
+    sugar: 'Swap one sweet drink or sweet snack a day for fruit, curd or roasted chana.',
+    fibre: 'Add dal, sprouts or a salad to two meals a day.',
+    salt: 'Skip packaged snacks, pickles and instant noodles for a few days, and drink water through the day.',
+    glow: 'Add one fruit or a bowl of vegetables to lunch, and a handful of nuts or seeds as a snack.',
+  }[key];
+}
+
+// The last 7 calendar days, one skin score each (null when nothing was logged that day).
+function skinDays() {
+  const [o1, o2] = ['oily', 'combination'].includes(skinType()) ? [1, 2] : [2, 3];
+  return [...Array(7)].map((_, i) => {
+    const d = Date.now() - (6 - i) * DAY;
+    const list = state.meals.filter(m => sameDay(m.at, d));
+    const label = new Date(d).toLocaleDateString('en', { weekday: 'short' });
+    if (!list.length) return { label, score: null, note: '' };
+    const known = key => list.filter(m => has(m[key])).length > 0;
+    const sugar = known('sugar') ? sum(list, 'sugar') : null;
+    const fibre = list.length >= 2 && known('fibre') ? sum(list, 'fibre') : null;
+    const sodium = known('sodium') ? sum(list, 'sodium') : null;
+    const oily = list.filter(isOilyMeal).length;
+    const levels = {
+      sugar: sugar === null ? null : sugar > 50 ? 2 : sugar > 35 ? 1 : 0,
+      oil: oily >= o2 ? 2 : oily >= o1 ? 1 : 0,
+      fibre: fibre === null ? null : fibre < 15 ? 2 : fibre < 25 ? 1 : 0,
+      salt: sodium === null ? null : sodium > 2300 ? 2 : sodium > 1800 ? 1 : 0,
+      glow: list.some(isGlowMeal) ? 0 : list.length >= 2 ? 1 : null,
+    };
+    const parts = [];
+    if (sugar !== null) parts.push(`${Math.round(sugar)} g sugar`);
+    parts.push(plural(oily, 'oily meal'));
+    if (sodium !== null) parts.push(`${Math.round(sodium)} mg sodium`);
+    return { label, score: skinScore(levels), note: parts.join(', ') };
+  });
+}
+
+// The weekly read: five factors from the last 7 days of logged meals, weighted for the chosen skin type.
+function skinWeek() {
+  const w = weekMeals();
+  if (w.length < 3) return null;
+  const type = skinType();
+  const n = new Set(w.map(m => new Date(m.at).toDateString())).size;
+  const avg = key => { const k = w.filter(m => has(m[key])); return k.length >= 3 ? sum(k, key) / n : null; };
+  const sugar = avg('sugar'), fibre = avg('fibre'), sodium = avg('sodium');
+  const oily = w.filter(isOilyMeal).length;
+  const glowDays = new Set(w.filter(isGlowMeal).map(m => new Date(m.at).toDateString())).size;
+  const [o1, o2] = ['oily', 'combination'].includes(type) ? [2, 4] : [3, 5];
+  const levels = {
+    sugar: sugar === null ? null : sugar > 50 ? 2 : sugar > 35 ? 1 : 0,
+    oil: oily >= o2 ? 2 : oily >= o1 ? 1 : 0,
+    fibre: fibre === null ? null : fibre < 15 ? 2 : fibre < 25 ? 1 : 0,
+    salt: sodium === null ? null : sodium > 2300 ? 2 : sodium > 1800 ? 1 : 0,
+    glow: n < 2 ? null : glowDays / n >= 0.6 ? 0 : glowDays / n >= 0.3 ? 1 : 2,
+  };
+  const ctx = { sugar, oily, fibre, sodium, glowDays, days: n };
+  const wt = SKIN_WEIGHTS[type] || SKIN_WEIGHTS.normal;
+  const rows = SKIN_FACTORS.map(k => ({ key: k, name: FACTOR_NAME[k], level: levels[k], text: levels[k] === null ? NO_DATA[k] : factorText(k, levels[k], ctx, type) }));
+  const tips = rows.filter(r => r.level > 0).sort((a, b) => b.level - a.level || wt[b.key] - wt[a.key]).slice(0, 3).map(r => skinAction(r.key));
+  const score = skinScore(levels);
+  return { score, band: skinBand(score), rows, tips, days: skinDays() };
+}
+
+// How kind a recipe is to the chosen skin type: from its name, ingredients and nutrients (null without a skin type).
+function skinFit(r) {
+  const type = skinType();
+  if (!type) return null;
+  const text = `${r.meal} ${(r.ingredientsList || r.pantry || []).join(' ')}`;
+  const fried = FRIED_WORDS.test(text) || (+r.fat || 0) >= 20;
+  const sugary = (+r.sugar || 0) >= 15;
+  const salty = (+r.sodium || 0) >= 700;
+  if (type === 'dry' ? (salty || fried) : (fried || sugary)) {
+    return { tone: 'warn', head: 'Go easy', text: {
+      oily: fried ? 'Higher in oil. Go easy if your skin is oily.' : 'Sugary. Keep the portion small, since sugar spikes are linked with breakouts.',
+      combination: fried ? 'Higher in oil. It may show in your oily T-zone.' : 'Sugary. Keep the portion small.',
+      dry: salty ? 'Salty. Salt can dry skin out, so drink water with it.' : 'Fried. Healthy fat from nuts or seeds suits dry skin better.',
+      sensitive: 'Heavy or sugary. This can flare sensitive skin.',
+      normal: fried ? 'Fried. Fine now and then.' : 'Sugary. Fine now and then.',
+    }[type] };
+  }
+  // Name the skin-friendly foods that were found, so each card says something different.
+  const found = [...new Set([...text.matchAll(new RegExp(GLOW_WORDS.source, 'gi'))].map(m => m[0].toLowerCase()))].slice(0, 2);
+  if (found.length) {
+    const foods = found.join(' and ');
+    return { tone: 'good', head: 'Skin-friendly', text: {
+      oily: `Light on oil, with ${foods}. Good for oily skin.`,
+      dry: `Not too salty, with ${foods}. Good for dry skin.`,
+      combination: `Balanced and light on oil, with ${foods}. Good for combination skin.`,
+      sensitive: `Mild and not heavy, with ${foods}. Gentle on sensitive skin.`,
+      normal: `Made with ${foods}. Good for your glow.`,
+    }[type] };
+  }
+  return { tone: 'ok', head: 'Fine for skin', text: 'Neutral for your skin. A fruit or some salad on the side would help.' };
+}
+
+function skinFitHtml(r) {
+  const f = skinFit(r);
+  return f ? `<p class="skinfit ${f.tone}"><b>${f.head}.</b> ${esc(f.text)}</p>` : '';
+}
+
+// ---- Skin pieces of UI ----
+function skinChart(days) {
+  const bars = days.map((d, i) => {
+    const h = d.score === null ? 4 : Math.max(4, d.score);
+    const fill = d.score === null ? 'var(--line)' : d.score >= 75 ? 'var(--leaf)' : d.score >= 55 ? 'var(--turmeric)' : 'var(--chili)';
+    return `<rect x="${i * 50 + 8}" y="${110 - h}" width="34" height="${h}" rx="3" fill="${fill}"><title>${esc(d.label)}: ${d.score === null ? 'nothing logged' : 'skin score ' + d.score + '. ' + esc(d.note)}</title></rect>
+      <text x="${i * 50 + 25}" y="130" text-anchor="middle" font-size="11" fill="currentColor">${esc(d.label)}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 350 140" class="chart skin-days" role="img" aria-label="Daily skin score for the last 7 days. Green bars are 75 or more, amber 55 to 74, red below 55. Grey means nothing was logged.">
+    ${bars}<line x1="0" x2="350" y1="35" y2="35" stroke="currentColor" stroke-dasharray="4 4" opacity=".45"/></svg>`;
+}
+
+function skinWeekHtml() {
+  const r = skinWeek(), type = skinType();
+  const pill = type ? ` <span class="tag">${esc(SKIN_TYPES[type].label)} skin</span>` : '';
+  const ask = type ? '' : '<p class="sub">Tell us your skin type for advice that fits it. <button class="btn small ghost" data-page="cook">Choose skin type</button></p>';
+  if (!r) return `<h3>Your skin and glow this week${pill}</h3><p class="sub">Log at least 3 meals this week to see how your food is affecting your skin and glow.</p>${ask}`;
+  const word = ['On track', 'Watch', 'Concern'], tone = ['var(--leaf)', 'var(--turmeric)', 'var(--chili)'], fill = [28, 64, 100];
+  const cells = r.rows.map(x => `<div class="cell ${x.level === null ? 'nodata' : ''}" style="--fill:${x.level === null ? 0 : fill[x.level]}%;--tone:${x.level === null ? '#ccc' : tone[x.level]}">
+      <small>${esc(x.name)}</small><b>${x.level === null ? 'No data' : word[x.level]}</b><small>this week</small></div>`).join('');
+  const tips = r.tips.length ? r.tips : ['Great week for your skin. Keep logging every meal to protect your glow.'];
+  return `<h3>Your skin and glow this week${pill}</h3>
+    <div class="result-head"><p class="insight ${r.band.css}" style="margin:0"><b>${r.band.name}.</b> ${esc(r.band.outlook)}</p>
+      <div class="score" style="--tone:${r.band.tone}"><b>${r.score}</b><span>/100</span><small>skin glow score</small></div></div>
+    <h4>Day by day</h4>${skinChart(r.days)}
+    <p class="sub small">Daily skin score for the last 7 days. The dashed line marks 75, a good day.</p>
+    <h4>What is driving it</h4><div class="tray skin">${cells}</div>
+    <ul class="reasons">${r.rows.map(x => `<li><b>${esc(x.name)}.</b> ${esc(x.text)}</li>`).join('')}</ul>
+    <h4>What to do next</h4><ul class="reasons">${tips.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
+    <div class="actions"><button class="btn alt" data-page="cook">Skin-friendly meal ideas</button></div>${ask}
+    <p class="sub small">Calculated from the meals you logged, so log every meal for a fair picture. The fill rises with the level of concern. Skin also depends on sleep, water, stress, hormones and sunscreen. This is general guidance, not a medical diagnosis. See a dermatologist for persistent acne or skin problems.</p>`;
+}
+
+// The Cook instead page: ask the skin type, then show what to eat and what to go easy on.
+function skinBoxHtml() {
+  const type = skinType(), g = SKIN_GUIDE[type];
+  const chips = Object.entries(SKIN_TYPES).map(([k, v]) => `<button type="button" class="chip btn-chip" data-act="skinPick" data-v="${k}" aria-pressed="${k === type}">${v.label}</button>`).join('')
+    + `<button type="button" class="chip btn-chip" data-act="skinPick" data-v="" aria-pressed="${!type}">Not sure</button>`;
+  const list = items => items.map(x => `<li>${esc(x)}</li>`).join('');
+  const guide = g
+    ? `<div class="skin-guide"><h4>Eating for ${esc(SKIN_TYPES[type].label.toLowerCase())} skin</h4>
+        <div class="lists"><div><h4>Eat more</h4><ul>${list(g.eat)}</ul></div><div><h4>Go easy on</h4><ul>${list(g.limit)}</ul></div></div>
+        <p class="insight good">${esc(g.tip)}</p>
+        <p class="sub small">General guidance from nutrition research, not medical advice. See a dermatologist for persistent acne or other skin problems.</p></div>`
+    : '<p class="sub small">Pick one and every meal idea below gets a skin note, and the AI suggestions are chosen to suit it.</p>';
+  return `<h3>Your skin type</h3>
+    <p class="sub">Tell us your skin type so your meal ideas are chosen to suit it.</p>
+    <div class="chips" role="group" aria-label="Skin type">${chips}</div>
+    <details class="how"><summary>Not sure? Try this quick check</summary>
+      <p>Wash your face with a gentle cleanser, pat it dry and leave it bare for 30 minutes. Then look in a mirror:</p>
+      <ul>${Object.values(SKIN_TYPES).map(v => `<li><b>${v.label}:</b> ${esc(v.hint)}</li>`).join('')}</ul></details>
+    ${guide}`;
+}
+
+// ---- Glow forecast for the street-free streak ----
+const glowStage = streak => [...GLOW_STAGES].reverse().find(s => streak >= s.day) || null;
+
+function glowLine() {
+  const streak = streakDays(), cur = glowStage(streak), next = GLOW_STAGES.find(s => s.day > streak);
+  const text = !cur ? 'Skin glow: your forecast starts after your first street-free day.'
+    : `Skin glow, day ${streak}: <b>${esc(cur.head)}</b>.` + (next ? ` Next: ${esc(next.head.toLowerCase())} in ${plural(next.day - streak, 'day')}.` : ' You are in the full-glow zone.');
+  return `<p class="glowline">✨ ${text}</p>`;
+}
+
+function glowForecastHtml() {
+  const streak = streakDays(), type = skinType(), cur = glowStage(streak), next = GLOW_STAGES.find(s => s.day > streak);
+  const cycle = Math.min(streak, 28);
+  const now = cur ? `<p class="insight good"><b>Right now: ${esc(cur.head)}.</b> ${esc(cur.text)}</p>`
+    : '<p class="insight">Your forecast starts after your first full street-free day. Keep street food out and log your meals.</p>';
+  const items = GLOW_STAGES.map(s => {
+    const reached = streak >= s.day, isNext = next === s, by = type && s.by && s.by[type];
+    const when = reached ? ' · reached' : isNext ? ` · in ${plural(s.day - streak, 'day')}` : '';
+    return `<li class="${reached ? 'reached' : ''}${isNext ? ' next' : ''}"><small class="when">${esc(s.label)}${when}</small><b>${esc(s.head)}</b><span>${esc(s.text)}</span>${by ? `<span class="forskin"><b>For ${esc(SKIN_TYPES[type].label.toLowerCase())} skin:</b> ${esc(by)}</span>` : ''}</li>`;
+  }).join('');
+  const ask = type ? '' : '<p class="sub small">Want this tuned to your skin? <button class="btn small ghost" data-page="cook">Choose your skin type</button></p>';
+  return `<div class="block"><h3>Skin glow forecast</h3>
+    <p class="sub">What a street-free streak may do for your skin. ${streak >= 28 ? 'You have gone a full 28-day skin cycle street-free.' : `You are ${plural(streak, 'day')} into a 28-day skin cycle.`}</p>
+    <div class="progress" role="progressbar" aria-label="Skin renewal cycle" aria-valuemin="0" aria-valuemax="28" aria-valuenow="${cycle}"><i style="width:${Math.round(cycle / 28 * 100)}%"></i></div>
+    ${now}${ask}<ol class="glow">${items}</ol>
+    <p class="sub small">These are typical expectations from nutrition research, not promises. Sleep, water, sunscreen, stress, hormones and your skincare routine matter too. See a dermatologist for persistent acne or skin problems.</p></div>`;
+}
+
 // ---------- Pages ----------
 function dashboard() {
   const today = todayMeals(), tg = targets(), streak = streakDays();
@@ -227,9 +497,11 @@ function dashboard() {
     <div><h3>Street-free streak</h3><p class="big" style="font-size:2.4rem">${streak} ${streak === 1 ? 'day' : 'days'}</p>
       ${dots(streak)}
       <p class="sub">${claimable() ? 'Your weekly reward is ready to claim.' : streak >= 7 ? 'Weekly reward claimed. Keep going for the next one.' : (7 - streak) + ' more days to your weekly reward.'}</p>
+      ${glowLine()}
       <button class="btn" data-page="rewards">See rewards</button></div>
   </div>
-  <div class="block"><h3>What this week is doing to your body</h3>${impactHtml()}</div>`;
+  <div class="block"><h3>What this week is doing to your body</h3>${impactHtml()}</div>
+  <div class="block" id="skin-week">${skinWeekHtml()}</div>`;
 }
 
 function fitLine(f) {
@@ -333,7 +605,7 @@ function recipeCard(r, first) {
   return `<article class="swap ${first ? 'first' : ''}">
     <div><small>${r.ai ? 'AI suggestion' : r.from ? 'Instead of ' + esc(r.from) : 'Home-cooked idea'}</small><h3>${esc(r.meal)}</h3></div>
     <button class="btn alt" data-act="cooked" data-rid="${esc(r.id)}">I cooked this</button>
-    <p>${esc(r.why)}</p>
+    <p>${esc(r.why)}</p>${skinFitHtml(r)}
     <small>${r.time} min · ${r.cal} kcal · protein ${r.protein}g${r.gear ? ' · ' + gearLabel(r) : ''}</small>
     ${(ing.length || (r.steps || []).length) ? `<details class="how"><summary>Ingredients and steps</summary>
       ${ing.length ? `<p><b>Main ingredients:</b> ${ing.map(esc).join(', ')}</p>` : ''}
@@ -347,7 +619,10 @@ function suggestionsHtml() {
   const { source, meals, reason } = cook.results;
   if (source === 'error') return `<p class="banner warn" role="alert">Couldn't get meal ideas from the AI. ${esc(reason || '')}</p>`;
   if (!meals.length) return '<p class="empty">The AI found no meal for those ingredients with your kitchen and diet. Add a few more items.</p>';
-  return `<p class="sub">Suggested by the AI (Gemini) for what you have, your diet and your kitchen.</p>${meals.map(r => recipeCard(r, false)).join('')}`;
+  const made = cook.results.skin;
+  const tuned = made && SKIN_TYPES[made] ? `, tuned for your ${SKIN_TYPES[made].label.toLowerCase()} skin` : '';
+  const stale = (made || '') !== skinType() ? '<p class="sub small">Your skin type changed since these ideas were made. Press "Suggest meals" again for ideas tuned to it.</p>' : '';
+  return `<p class="sub">Suggested by the AI (Gemini) for what you have, your diet and your kitchen${tuned}.</p>${stale}${meals.map(r => recipeCard(r, false)).join('')}`;
 }
 
 function cookPage() {
@@ -359,6 +634,7 @@ function cookPage() {
   const rows = ordered.map((r, i) => recipeCard(r, i === 0 && hit(r))).join('');
   const why = cook.focus ? `You asked for a swap for ${esc(cook.focus)}.` : last ? `Your last street meal was ${esc(last.name)}, so matching swaps come first.` : 'Home-cooked swaps for common street food.';
   return `<h2>Cook instead</h2><p class="sub">Showing meals for a ${esc(p.diet)} diet. Kitchen: ${esc((KITCHENS[p.kitchen] || KITCHENS.burner).toLowerCase())}. Change these in Health profile.</p>
+  <div class="block skin-block" id="skin-box">${skinBoxHtml()}</div>
   <div class="block"><h3>What is in your room?</h3>
     <label for="pantry">Ingredients you have, separated by commas</label>
     <input id="pantry" value="${esc(cook.pantry)}" placeholder="poha, onion, peanuts" style="max-width:420px;width:100%">
@@ -384,6 +660,7 @@ function rewardsPage() {
   <div class="block reward ${can ? 'ready' : ''}"><h3>Weekly reward</h3>
     <p>${can ? 'You made it through a full street-free week. Claim 50 bonus points.' : streak >= 7 ? 'Claimed for this week. The next one unlocks after 7 more street-free days.' : 'Unlocks after 7 days in a row without street food.'}</p>
     <button class="btn alt" data-act="claim" ${can ? '' : 'disabled'}>${can ? 'Claim 50 points' : 'Not ready yet'}</button></div>
+  ${glowForecastHtml()}
   <div class="block"><h3>Level ${lv.n}: ${lv.name}</h3><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${lv.into}"><i style="width:${lv.into}%"></i></div>
     <p class="sub">${pts} points. ${100 - lv.into} more for the next level. You earn 10 for every street-free day, 5 for every home-cooked meal and 50 for each weekly reward.</p></div>
   <div class="block"><h3>Badges</h3>${badgeRows}</div>`;
@@ -407,6 +684,7 @@ function profilePage() {
   <label>Diet<select id="p-diet">${Object.keys(DIET_RANK).map(d => `<option ${d === p.diet ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
   <label>Weight goal<select id="p-goalDir">${opts('goalDir', { lose: 'Lose weight', maintain: 'Stay the same', gain: 'Gain weight or muscle' })}</select></label>
   <label>Kitchen in your room<select id="p-kitchen">${opts('kitchen', KITCHENS)}</select></label>
+  <label>Skin type<select id="p-skin"><option value="">Not set</option>${Object.entries(SKIN_TYPES).map(([v, t]) => `<option value="${v}" ${v === p.skin ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
   <label>Daily calorie goal<input id="p-goal" type="number" min="1200" max="4000" step="50" value="${esc(p.goal)}"></label></div>
   <div class="actions"><button class="btn" data-act="saveProfile">Save profile</button><button class="btn alt" data-act="suggestGoal">Suggest a calorie goal</button></div>
   <div class="block"><h3>Account</h3>${who}</div>
@@ -437,13 +715,13 @@ function refreshStatus() {
   const chip = $('#status'), who = $('#who');
   if (who) who.textContent = authLabel();
   if (!chip) return;
-  const map = { idle: ['Connecting to the server…', ''], ok: ['Connected to NutriScan AI', 'ok'], ai: ['Connected · AI unavailable: ' + net.detail, 'bad'], offline: ['Server not reachable: is uvicorn running?', 'bad'], http: ['Server error: ' + net.detail, 'bad'] };
+  const map = { idle: ['Connecting to the server…', ''], ok: ['Connected to The Nutritionist', 'ok'], ai: ['Connected · AI unavailable: ' + net.detail, 'bad'], offline: ['Server not reachable: is uvicorn running?', 'bad'], http: ['Server error: ' + net.detail, 'bad'] };
   const [text, cls] = map[net.state];
   chip.textContent = text; chip.className = 'status ' + cls;
 }
 
 // ---------- Meals: create, log, sync ----------
-const newMeal = (f, extra = {}) => ({ id: uid(), at: Date.now(), name: f.name, cal: f.cal, protein: f.protein, carbs: f.carbs, fat: f.fat, fibre: f.fibre ?? null, sodium: f.sodium ?? null, sugar: f.sugar ?? null, satFat: f.satFat ?? null, street: !!f.street, home: false, synced: false, ...extra });
+const newMeal = (f, extra = {}) => ({ id: uid(), at: Date.now(), name: f.name, cal: f.cal, protein: f.protein, carbs: f.carbs, fat: f.fat, fibre: f.fibre ?? null, sodium: f.sodium ?? null, sugar: f.sugar ?? null, satFat: f.satFat ?? null, foods: f.foods ?? (f.items ? f.items.map(i => i.name).join(', ') : ''), street: !!f.street, home: false, synced: false, ...extra });
 const canSync = () => !!CFG.endpoints.intake && signedIn();
 
 function logMeal(m) {
@@ -466,7 +744,7 @@ async function syncNow(manual) {
     const before = state.meals.filter(m => !m.sample).length;
     const fresh = remote.filter(r => !local.has(r.id)).length;
     state.meals = [
-      ...remote.map(r => { const l = local.get(r.id); return l ? { ...r, id: l.id, home: l.home, street: l.street || r.street } : r; }),
+      ...remote.map(r => { const l = local.get(r.id); return l ? { ...r, id: l.id, home: l.home, street: l.street || r.street, foods: l.foods || r.foods } : r; }),
       ...state.meals.filter(m => !m.synced && !m.sample),
     ];
     state.sample = false;
@@ -585,7 +863,7 @@ const actions = {
   cooked(btn) {
     const r = [...RECIPES, ...(cook.results ? cook.results.meals : [])].find(x => x.id === btn.dataset.rid);
     if (!r) return;
-    logMeal(newMeal({ name: r.meal, cal: r.cal, protein: r.protein, carbs: r.carbs, fat: r.fat, fibre: r.fibre, sodium: r.sodium, sugar: r.sugar, street: false }, { home: true, source: 'swap' }));
+    logMeal(newMeal({ name: r.meal, cal: r.cal, protein: r.protein, carbs: r.carbs, fat: r.fat, fibre: r.fibre, sodium: r.sodium, sugar: r.sugar, foods: (r.ingredientsList || r.pantry || []).join(', '), street: false }, { home: true, source: 'swap' }));
     toast('Logged. Nice cooking.');
   },
   pantryAdd(btn) {
@@ -593,13 +871,29 @@ const actions = {
     if (!items.includes(stem(btn.dataset.v))) box.value = (box.value.trim().replace(/,$/, '') + ', ' + btn.dataset.v).replace(/^,\s*/, '');
     cook.pantry = box.value;
   },
+  // Choosing a skin type is saved on this device and redraws the Cook instead page in place (typed ingredients and scroll position are kept).
+  skinPick(btn) {
+    const box = $('#pantry'); if (box) cook.pantry = box.value;
+    const v = btn.dataset.v;
+    state.profile.skin = SKIN_TYPES[v] ? v : '';
+    save();
+    const y = window.scrollY;
+    show('cook');
+    window.scrollTo(0, y);
+    const again = document.querySelector(`[data-act="skinPick"][data-v="${v}"]`);
+    if (again) again.focus({ preventScroll: true });
+    toast(SKIN_TYPES[v] ? `Skin type set to ${SKIN_TYPES[v].label.toLowerCase()}` : 'Skin type cleared');
+  },
   async suggest(btn) {
     cook.pantry = $('#pantry').value.trim();
     const items = cook.pantry.split(/,|\n|;/).map(s => s.trim()).filter(Boolean);
     if (!items.length) return toast('Add at least one ingredient');
     if (cook.busy) return;
     cook.busy = true; btn.disabled = true; $('#suggestions').innerHTML = suggestionsHtml();
-    try { cook.results = await suggestMeals(items, state.profile); } finally { cook.busy = false; }
+    try {
+      cook.results = await suggestMeals(items, state.profile);
+      cook.results.skin = skinType(); // the skin type these ideas were made for
+    } finally { cook.busy = false; }
     const box = $('#suggestions'), b = $('#suggest');
     if (b) b.disabled = false;
     if (box) box.innerHTML = suggestionsHtml();
@@ -628,7 +922,7 @@ const actions = {
       return [d.toLocaleDateString('en-CA'), d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }), m.name, m.cal, m.protein, m.carbs, m.fat, m.fibre ?? '', m.sodium ?? '', m.sugar ?? '', m.street ? 'yes' : 'no', m.home ? 'yes' : 'no'].map(csvCell).join(',');
     });
     const url = URL.createObjectURL(new Blob([[head.join(','), ...rows].join('\n')], { type: 'text/csv' }));
-    const a = Object.assign(document.createElement('a'), { href: url, download: 'scanmyfood-history.csv' });
+    const a = Object.assign(document.createElement('a'), { href: url, download: 'the-nutritionist-history.csv' });
     document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
@@ -664,7 +958,7 @@ const actions = {
       if (!(n >= lo && n <= hi)) return toast(`${label} should be between ${lo} and ${hi}`);
       p[k] = n;
     }
-    ['name', 'sex', 'activity', 'goalDir', 'diet', 'kitchen'].forEach(k => { p[k] = val(k).trim(); });
+    ['name', 'sex', 'activity', 'goalDir', 'diet', 'kitchen', 'skin'].forEach(k => { p[k] = val(k).trim(); });
     state.profile = { ...state.profile, ...p };
     state.profileTouched = true;
     save();

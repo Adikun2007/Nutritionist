@@ -1,4 +1,4 @@
-// ScanMyFood web: sample data, built-in recipes, badges, and the helpers that work without a server.
+// The Nutritionist web: sample data, built-in recipes, badges, skin guide, and the helpers that work without a server.
 // Load order in index.html: config.js, data.js, api.js, auth.js, app.js
 
 // ---------- Street-food detector ----------
@@ -250,6 +250,154 @@ function usableRecipes(p) {
   const diet = DIET_RANK[p.diet] ?? DIET_RANK.Vegetarian, kit = KITCHEN_RANK[p.kitchen] ?? KITCHEN_RANK.burner;
   return RECIPES.filter(r => DIET_RANK[r.diet] <= diet && KITCHEN_RANK[r.gear] <= kit);
 }
+
+// ---------- Skin types, skin guide and glow forecast ----------
+// General nutrition guidance for skin, worded as "may" and "linked with": it is not a diagnosis or a promise.
+const SKIN_TYPES = {
+  oily: { label: 'Oily', hint: 'Shiny across the face a few hours after washing' },
+  dry: { label: 'Dry', hint: 'Feels tight or flaky and is rarely shiny' },
+  combination: { label: 'Combination', hint: 'Shiny forehead and nose, with normal or dry cheeks' },
+  normal: { label: 'Normal', hint: 'Comfortable: not very shiny and not tight' },
+  sensitive: { label: 'Sensitive', hint: 'Stings, itches or turns red easily' },
+};
+
+// eat / limit / tip are shown on the Cook instead page. note is the short brief sent to Gemini with the meal-ideas
+// request (the backend accepts at most 200 characters in its optional `note` field).
+const SKIN_GUIDE = {
+  oily: {
+    eat: [
+      'Dal, sprouts, chana and whole grains: slow-digesting foods that keep blood sugar steady',
+      'Vegetables, salad and fruit such as papaya, guava, orange and tomato (vitamins A and C)',
+      'Zinc and omega-3 foods: pumpkin seeds, walnuts, flaxseed and fish',
+      'Plenty of water, and unsweetened tea or buttermilk instead of sweet drinks',
+    ],
+    limit: [
+      'Deep-fried and very oily food such as samosa, pakora, bhature and fries',
+      'Sweets, sugary drinks and white-flour snacks: high blood sugar is linked with more breakouts',
+      'Heavy creamy gravies and extra butter or ghee',
+      'Milk-based sweets and shakes, if you notice breakouts after them',
+    ],
+    tip: 'Oil on your plate does not turn straight into oil on your face. But fried meals are usually also high in refined flour and sugar, which are linked with breakouts. Tawa, steamed and roasted versions give you the same taste with less of both.',
+    note: "Skin type: oily. Prefer low-oil, low-sugar, high-fibre meals with no deep-frying. In 'why', say how the meal helps oily skin.",
+  },
+  dry: {
+    eat: [
+      'Healthy fats: nuts, seeds, walnuts, flaxseed, and a little ghee or groundnut oil',
+      'Water-rich foods: cucumber, watermelon, orange and buttermilk',
+      'Vitamin A and E foods: carrot, spinach, sweet potato, almonds and sunflower seeds',
+      'Protein that helps skin repair: dal, eggs, paneer or fish',
+    ],
+    limit: [
+      'Very salty snacks, instant noodles and pickles: salt pulls water out of skin',
+      'Too much tea, coffee, cold drinks and alcohol, which can leave you dehydrated',
+      'Cutting out all fat: dry skin needs some healthy fat',
+    ],
+    tip: 'Dry skin needs water and healthy fats, not a fat-free diet. A handful of nuts or a spoon of seeds a day, and water through the day, is a good start.',
+    note: "Skin type: dry. Prefer meals with healthy fats, water-rich vegetables and low salt. In 'why', say how the meal helps dry skin.",
+  },
+  combination: {
+    eat: [
+      'Dal, sprouts and vegetables for steady blood sugar, which helps the oily zones',
+      'Water-rich fruit and a handful of nuts, which help the dry cheeks',
+      'Citrus, tomato, papaya, carrot and leafy greens',
+      'Lean protein such as eggs, paneer, dal, chicken or fish',
+    ],
+    limit: [
+      'Deep-fried and sugary snacks, which tend to show in the oily T-zone',
+      'Very salty packaged food, which makes the dry patches look dull',
+      'Skipping meals and then snacking on sweets',
+    ],
+    tip: 'Balance is the goal: keep fried food and sugar low for the oily zones, and keep some healthy fat and water for the dry zones.',
+    note: "Skin type: combination. Prefer balanced meals low in oil and sugar with some healthy fat and fibre. In 'why', say how the meal helps skin.",
+  },
+  normal: {
+    eat: [
+      'A colourful plate: two or more coloured vegetables or fruits a day',
+      'Dal, curd, sprouts, eggs or paneer for protein',
+      'A handful of nuts or seeds for vitamin E',
+      'Water through the day',
+    ],
+    limit: [
+      'Too much sugar and sweet drinks',
+      'Deep-fried street food most days',
+      'Very salty packaged snacks',
+    ],
+    tip: 'You are in a good place. Keep your plate colourful and steady, and your skin will usually follow.',
+    note: "Skin type: normal. Prefer balanced meals with colourful vegetables and moderate oil. In 'why', say how the meal supports healthy skin.",
+  },
+  sensitive: {
+    eat: [
+      'Gentle, cooked meals: khichdi, dal, oats, cooked vegetables and fruit',
+      'Omega-3 foods: walnuts, flaxseed and fish',
+      'Water through the day, and warm (not scalding) drinks',
+      'Curd or buttermilk, if they suit you',
+    ],
+    limit: [
+      'Very spicy and very hot food, and alcohol, if they make your face flush or itch',
+      'Sugary and heavily processed snacks',
+      'Changing many foods at once, which makes triggers hard to spot',
+    ],
+    tip: 'Sensitive skin often reacts to personal triggers. Note what you ate when your skin flares and change one food at a time to spot it.',
+    note: "Skin type: sensitive. Prefer mild, low-sugar meals with little chilli and no deep-frying. In 'why', say how the meal is gentle on skin.",
+  },
+};
+
+const skinNote = type => (SKIN_GUIDE[type] ? SKIN_GUIDE[type].note : '').slice(0, 200);
+
+// Words used to read meal names. FRIED_WORDS: fried or very oily food. GLOW_WORDS: foods that support skin
+// (colourful vegetables and fruit, dal and other legumes, nuts and seeds, fish, curd).
+const FRIED_WORDS = /\b(fried|deep[- ]fried|fries|chips|pakora|pakoda|bhajiya|bhajji|bhaji|samosa|kachori|kachauri|vada|puri|poori|bhatura|bhature|kulcha|crispy|tempura|nuggets|makhani|malai|creamy|namkeen|kurkure)\b/i;
+const GLOW_WORDS = /\b(fruits?|salad|sprouts?|papaya|guava|amla|orange|citrus|lemon|mosambi|kiwi|berries|mango|apple|banana|melon|watermelon|cucumber|carrot|tomato|spinach|palak|methi|greens|leafy|broccoli|capsicum|beetroot|pumpkin|sweet potato|peas?|cabbage|cauliflower|vegetables?|veggies|sabzi|sabji|dal|lentils?|moong|chana|chickpeas?|rajma|walnuts?|almonds?|nuts?|seeds?|flax|peanuts?|fish|salmon|sardine|curd|buttermilk)\b/i;
+
+// What a street-free streak may do for skin. A stage applies once the streak reaches `day`.
+// `by` has an extra line for each skin type. All wording is "may": results differ from person to person.
+const GLOW_STAGES = [
+  {
+    day: 1, label: 'Days 1 to 2', head: 'Less puffy',
+    text: 'Less salty, fried street food lets your body let go of extra water, so your face may look a little less puffy, especially around the eyes.',
+    by: {
+      oily: 'Skin may feel less heavy and greasy after meals.',
+      dry: 'Less salt means less water pulled out of your skin, so it may feel a little less tight.',
+      combination: 'Your shiny T-zone may feel less heavy after meals.',
+      sensitive: 'Fewer heavy, spicy meals can mean fewer flushed moments after eating.',
+      normal: 'Skin may feel lighter and more comfortable.',
+    },
+  },
+  {
+    day: 3, label: 'Day 3', head: 'Steadier skin',
+    text: 'Without sugary, refined snacks your blood sugar swings less, which helps keep oil production and inflammation steadier.',
+    by: {
+      oily: 'Shine may build up more slowly through the day.',
+      dry: 'Skin may feel more comfortable if you keep drinking water and eating healthy fats.',
+      combination: 'The oily and dry zones may start to feel more balanced.',
+      sensitive: 'Skin may feel calmer, with fewer random flare-ups.',
+      normal: 'Skin tone may look a little more even.',
+    },
+  },
+  {
+    day: 5, label: 'Day 5', head: 'Fresher mornings',
+    text: 'More fibre, vegetables and water often show first as skin that looks fresher when you wake up.',
+  },
+  {
+    day: 7, label: 'Day 7 (weekly reward)', head: 'Early glow',
+    text: 'A full week of cleaner eating. Many people see skin that looks brighter and feels calmer. New spots may start to slow down, but a clear-up usually takes longer than a week.',
+    by: {
+      oily: 'Fewer new shiny patches and clogged pores forming.',
+      dry: 'Flaking may ease and skin may look a little plumper.',
+      combination: 'Your T-zone may look less shiny while your cheeks stay comfortable.',
+      sensitive: 'Flushing and irritation may happen less often.',
+      normal: 'A brighter, more even look.',
+    },
+  },
+  {
+    day: 14, label: 'Day 14', head: 'Clearer',
+    text: 'Two weeks of low sugar and little fried food: new breakouts and dullness often start to ease. Skin cells are still renewing, so keep going.',
+  },
+  {
+    day: 28, label: 'Day 28', head: 'A full skin cycle',
+    text: 'Skin renews itself roughly every 4 weeks, so this is when diet changes show most clearly: fewer breakouts and a more even tone. The colour from fruit and vegetables (carotenoids) also builds up in skin over about 6 weeks, giving a warm, healthy glow.',
+  },
+];
 
 // ---------- "What is in my room?" matching ----------
 // Turns "Peanuts", "2 eggs" or "yogurt" into a comparable form: lower case, singular, one common name.

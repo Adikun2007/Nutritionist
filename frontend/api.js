@@ -1,4 +1,4 @@
-// ScanMyFood web: everything that talks to the NutriScan AI backend (/api/v1).
+// The Nutritionist web: everything that talks to the NutriScan AI backend (/api/v1).
 // Every response is an envelope {success, code, message, data}. Every AI feature (scan, chat, meal ideas,
 // insight) is answered by Gemini through the backend; nothing is faked on the page.
 const CFG = window.SMF_CONFIG;
@@ -135,6 +135,7 @@ function fromEntry(e) {
   return {
     ...fromNutrients(e.totals), id: e.id, remoteId: e.id, scanId: e.scan_id || null, name: e.name,
     at: Date.parse(e.eaten_at) || Date.now(), mealType: e.meal_type, source: e.source,
+    foods: (e.items || []).map(i => i.name).join(', '),
     street: isStreetFood(names), home: false, synced: true,
   };
 }
@@ -211,12 +212,15 @@ function fromRecipe(r, i) {
 }
 
 // Gemini meal ideas for what the person has, within their kitchen, diet and allergies (from the profile).
+// When a skin type is chosen, a short skin brief goes in the request's optional `note` field (max 200 characters),
+// so Gemini picks meals that suit that skin and says how each one helps.
 async function suggestMeals(items, profile) {
   try {
     if (!signedIn()) throw notSignedInError();
+    const note = skinNote(profile.skin);
     const r = await callApi(endpoint('suggest'), {
       method: 'POST', timeoutMs: CFG.aiTimeoutMs,
-      ...jsonBody({ ingredients: items.slice(0, 20), kitchen: profile.kitchen || 'burner', count: 3 }),
+      ...jsonBody({ ingredients: items.slice(0, 20), kitchen: profile.kitchen || 'burner', count: 3, ...(note && { note }) }),
     });
     return { source: 'ai', meals: r.meals.map(fromRecipe) };
   } catch (e) {
